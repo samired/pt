@@ -1,0 +1,13 @@
+[package]
+name        = "prayer_times"
+version     = "0.1.0"
+edition     = "2021"
+description = "Prayer times calculator — Egyptian General Authority of Survey"
+authors     = ["Cairo Prayer Times"]
+
+[[bin]]
+name = "prayer_times"
+path = "src/main.rs"
+
+[dependencies]
+# Zero external dependencies — pure std Rust
