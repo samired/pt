@@ -100,132 +100,6 @@ fn assr_altitude(lat: f64, dec: f64) -> f64 {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Hijri (Islamic) calendar conversion
-//
-// Algorithm: Fātimid / Kuwaiti tabular calendar (civil reckoning)
-// which is the most widely used arithmetic Hijri calendar and is
-// identical to the one used by Saudi Arabia's Umm al-Qura table
-// for civil dates. Leap years follow the 30-year Kalimat cycle:
-// years 2,5,7,10,13,15,18,21,24,26,29 in each 30-year period
-// are leap (355 days); all others are common (354 days).
-//
-// Reference: "Calendrical Calculations" — Reingold & Dershowitz
-// ─────────────────────────────────────────────────────────────
-
-/// Names of the twelve Hijri months (Arabic transliteration)
-const HIJRI_MONTHS: [&str; 12] = [
-    "Muharram", "Safar", "Rabi' al-Awwal", "Rabi' al-Thani",
-    "Jumada al-Ula", "Jumada al-Akhira", "Rajab", "Sha'ban",
-    "Ramadan", "Shawwal", "Dhu al-Qi'dah", "Dhu al-Hijjah",
-];
-
-/// Days of the week in Arabic (Sunday = 0)
-const ARABIC_WEEKDAYS: [&str; 7] = [
-    "الأحد", "الاثنين", "الثلاثاء", "الأربعاء",
-    "الخميس", "الجمعة", "السبت",
-];
-
-/// Weekday names in English (Sunday = 0)
-const ENGLISH_WEEKDAYS: [&str; 7] = [
-    "Sunday", "Monday", "Tuesday", "Wednesday",
-    "Thursday", "Friday", "Saturday",
-];
-
-#[derive(Debug)]
-struct HijriDate {
-    year:  i32,
-    month: u32,   // 1-based
-    day:   u32,
-    weekday: u32, // 0 = Sunday
-}
-
-impl HijriDate {
-    fn month_name(&self) -> &'static str {
-        HIJRI_MONTHS[(self.month - 1) as usize]
-    }
-    fn weekday_ar(&self) -> &'static str {
-        ARABIC_WEEKDAYS[self.weekday as usize]
-    }
-    fn weekday_en(&self) -> &'static str {
-        ENGLISH_WEEKDAYS[self.weekday as usize]
-    }
-}
-
-/// Returns true if the given Hijri year is a leap year
-/// in the 30-year Kalimat tabular cycle.
-fn hijri_is_leap(hy: i32) -> bool {
-    matches!(hy.rem_euclid(30), 2 | 5 | 7 | 10 | 13 | 15 | 18 | 21 | 24 | 26 | 29)
-}
-
-/// Number of days in a given Hijri month (1-based month).
-/// Odd months = 30 days, even months = 29 days,
-/// except month 12 which has 30 days in leap years.
-fn hijri_month_days(hy: i32, hm: u32) -> u32 {
-    if hm % 2 == 1 {
-        30
-    } else if hm == 12 && hijri_is_leap(hy) {
-        30
-    } else {
-        29
-    }
-}
-
-/// Convert a Gregorian date (year, month, day) → HijriDate.
-///
-/// Steps:
-///  1. Compute Julian Day Number for the Gregorian date.
-///  2. Convert JDN → Hijri via the Kalimat tabular epoch
-///     (JDN 1_948_440 = 1 Muharram 1 AH in this scheme).
-fn gregorian_to_hijri(year: i32, month: u32, day: u32) -> HijriDate {
-    // Julian Day Number (same function used for prayer times)
-    let jd = julian_day(year, month, day) as i64;
-
-    // Weekday: JDN 0 = Monday → we need Sunday=0 base
-    // JDN mod 7: 0=Mon,1=Tue,...,6=Sun  →  shift so 0=Sun
-    let weekday = ((jd + 1).rem_euclid(7)) as u32; // 0=Sun
-
-    // Hijri tabular epoch in JDN (1 Muharram 1 AH)
-    // Epoch = JDN 1_948_440  (the Fatimid/Kuwaiti civil epoch)
-    const HIJRI_EPOCH: i64 = 1_948_440;
-
-    // Days elapsed since the Hijri epoch
-    let delta = jd - HIJRI_EPOCH;
-
-    // Which 30-year cycle and position within it?
-    let cycle     = delta / 10_631;       // complete 30-year cycles
-    let remainder = delta % 10_631;       // days into current cycle
-
-    // Walk years within the current cycle to find the Hijri year offset
-    let mut year_offset = 0i64;
-    let mut days_acc    = 0i64;
-    loop {
-        let hy_test = cycle * 30 + year_offset + 1;
-        let year_len = if hijri_is_leap(hy_test as i32) { 355 } else { 354 };
-        if days_acc + year_len > remainder {
-            break;
-        }
-        days_acc    += year_len;
-        year_offset += 1;
-    }
-
-    let hy  = (cycle * 30 + year_offset + 1) as i32;
-    let mut day_in_year = (remainder - days_acc) as u32 + 1; // 1-based
-
-    // Walk months
-    let mut hm = 1u32;
-    loop {
-        let ml = hijri_month_days(hy, hm);
-        if day_in_year <= ml {
-            break;
-        }
-        day_in_year -= ml;
-        hm += 1;
-    }
-
-    HijriDate { year: hy, month: hm, day: day_in_year, weekday }
-}
-
-// ─────────────────────────────────────────────────────────────
 // Format a decimal-hours value as HH:MM:SS
 // ─────────────────────────────────────────────────────────────
 fn fmt_time(mut t: f64) -> String {
@@ -290,32 +164,19 @@ fn calc_prayer_times(
         ("Isha   ", isha    + offset),
     ];
 
-    // ── Hijri date ──────────────────────────────────────────
-    let hijri = gregorian_to_hijri(year, month, day);
-    let hijri_line_en = format!(
-        "{}, {} {} {} AH",
-        hijri.weekday_en(), hijri.day, hijri.month_name(), hijri.year
-    );
-    //let hijri_line_ar = format!(
-    //    "{} / {} {} {} هـ",
-    //    hijri.weekday_ar(), hijri.day, hijri.month_name(), hijri.year
-    //);
-
     // ── Output ──────────────────────────────────────────────
-    println!("╔═══════════════════════════════════════════════════════╗");
-    println!("║          Prayer Times — Cairo, Egypt                  ║");
-    println!("║    Method: Egyptian General Authority of Survey       ║");
-    println!("╠═══════════════════════════════════════════════════════╣");
-    println!("║  Gregorian : {}, {:04}-{:02}-{:02}                       ║" , hijri.weekday_en(), year, month, day);
-    println!("║  Hijri : {:<44} ║", hijri_line_en);
-    println!("╠═══════════════════════════════════════════════════════╣");
-    println!("║  Lat / Lon : {:.4}°N  /  {:.4}°E                  ║", lat, lon);
-    println!("║  Timezone  : UTC{:+}                                    ║", tz);
-    println!("╠═══════════════════════════════════════════════════════╣");
+    println!("╔══════════════════════════════════════════════╗");
+    println!("║        Prayer Times — Cairo, Egypt           ║");
+    println!("║  Method: Egyptian General Authority of Survey║");
+    println!("╠══════════════════════════════════════════════╣");
+    println!("║  Date     : {:04}-{:02}-{:02}                       ║", year, month, day);
+    println!("║  Lat/Lon  : {:.4}°N / {:.4}°E            ║", lat, lon);
+    println!("║  Timezone : UTC{:+}                            ║", tz);
+    println!("╠══════════════════════════════════════════════╣");
     for (name, t) in &times {
-        println!("║  {}  {}                                    ║", name, fmt_time(*t));
+        println!("║  {}  {}                           ║", name, fmt_time(*t));
     }
-    println!("╚═══════════════════════════════════════════════════════╝");
+    println!("╚══════════════════════════════════════════════╝");
 }
 
 // ─────────────────────────────────────────────────────────────
